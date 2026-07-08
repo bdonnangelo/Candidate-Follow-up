@@ -16,7 +16,9 @@ Producción: ver DEPLOY.md
 import os
 import re
 import json
+import ssl
 from datetime import datetime, timedelta, timezone
+from urllib.parse import urlsplit, urlunsplit, parse_qsl, urlencode
 
 from flask import Flask, request, redirect, session, jsonify, render_template
 from dateutil import parser as dateparser
@@ -53,19 +55,43 @@ SYNC_LOOKBACK_DAYS = 180
 app = Flask(__name__)
 app.secret_key = os.environ.get("FLASK_SECRET_KEY", os.urandom(24).hex())
 
-db_url = os.environ.get("DATABASE_URL", f"sqlite:///{os.path.join(BASE_DIR, 'followups.db')}")
-# Render/Heroku/Neon entregan "postgres://" o "postgresql://". Usamos pg8000
-# (driver 100% Python) en vez de psycopg2 para evitar problemas de
-# compatibilidad binaria con versiones nuevas de Python.
-if db_url.startswith("postgres://"):
-    db_url = db_url.replace("postgres://", "postgresql+pg8000://", 1)
-elif db_url.startswith("postgresql://") and "+pg8000" not in db_url:
-    db_url = db_url.replace("postgresql://", "postgresql+pg8000://", 1)
+def _prepare_database_url(raw_url):
+    """Usa pg8000 (driver 100% Python) para Postgres, y separa el sslmode
+    (que pg8000 no entiende como parámetro de conexión) en un SSLContext
+    real pasado por separado."""
+    if raw_url.startswith("postgres://"):
+        raw_url = raw_url.replace("postgres://", "postgresql://", 1)
+
+    if not raw_url.startswith("postgresql://"):
+        return raw_url, {}  # sqlite u otra cosa: sin cambios
+
+    parts = urlsplit(raw_url)
+    query = dict(parse_qsl(parts.query))
+    sslmode = query.pop("sslmode", None)
+    query.pop("channel_binding", None)
+
+    new_url = urlunsplit((
+        "postgresql+pg8000",
+        parts.netloc,
+        parts.path,
+        urlencode(query),
+        parts.fragment,
+    ))
+
+    engine_options = {}
+    if sslmode and sslmode != "disable":
+        engine_options["connect_args"] = {"ssl_context": ssl.create_default_context()}
+
+    return new_url, engine_options
+
+
+db_url, _extra_engine_options = _prepare_database_url(
+    os.environ.get("DATABASE_URL", f"sqlite:///{os.path.join(BASE_DIR, 'followups.db')}")
+)
 
 app.config["SQLALCHEMY_DATABASE_URI"] = db_url
-app.config["SQLALCHEMY_ENGINE_OPTIONS"] = {"pool_pre_ping": True}
+app.config["SQLALCHEMY_ENGINE_OPTIONS"] = {"pool_pre_ping": True, **_extra_engine_options}
 db = SQLAlchemy(app)
-
 
 # ---------------------------------------------------------------------------
 # Modelos
