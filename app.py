@@ -54,9 +54,13 @@ app = Flask(__name__)
 app.secret_key = os.environ.get("FLASK_SECRET_KEY", os.urandom(24).hex())
 
 db_url = os.environ.get("DATABASE_URL", f"sqlite:///{os.path.join(BASE_DIR, 'followups.db')}")
-# Render/Heroku entregan "postgres://", SQLAlchemy moderno necesita "postgresql://"
+# Render/Heroku/Neon entregan "postgres://" o "postgresql://". Usamos pg8000
+# (driver 100% Python) en vez de psycopg2 para evitar problemas de
+# compatibilidad binaria con versiones nuevas de Python.
 if db_url.startswith("postgres://"):
-    db_url = db_url.replace("postgres://", "postgresql://", 1)
+    db_url = db_url.replace("postgres://", "postgresql+pg8000://", 1)
+elif db_url.startswith("postgresql://") and "+pg8000" not in db_url:
+    db_url = db_url.replace("postgresql://", "postgresql+pg8000://", 1)
 
 app.config["SQLALCHEMY_DATABASE_URI"] = db_url
 app.config["SQLALCHEMY_ENGINE_OPTIONS"] = {"pool_pre_ping": True}
