@@ -209,7 +209,12 @@ async function sync() {
   el("syncBtn").disabled = true;
   el("syncBtn").textContent = "Sincronizando…";
   try {
-    const res = await fetch("/api/sync", { method: "POST" });
+    const since = el("syncSince").value; // "YYYY-MM-DD"
+    const res = await fetch("/api/sync", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ since }),
+    });
     const data = await res.json();
     if (!res.ok) throw new Error(data.error || "error");
     showToast(`Sincronizado: ${data.new_tracked} entrevista(s) nueva(s) detectada(s)`);
@@ -222,6 +227,12 @@ async function sync() {
   }
 }
 
+function defaultSyncSince() {
+  const d = new Date();
+  d.setDate(d.getDate() - 30);
+  return d.toISOString().slice(0, 10); // "YYYY-MM-DD"
+}
+
 async function logout() {
   await fetch("/logout", { method: "POST" });
   window.location.reload();
@@ -232,6 +243,8 @@ async function init() {
   if (me.logged_in && me.connected) {
     el("userEmail").textContent = me.email;
     el("userEmail").classList.remove("hidden");
+    el("syncSince").value = defaultSyncSince();
+    el("syncSinceLabel").classList.remove("hidden");
     el("syncBtn").classList.remove("hidden");
     el("logoutBtn").classList.remove("hidden");
     el("app").classList.remove("hidden");
