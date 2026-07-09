@@ -1,0 +1,93 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Follow-ups de candidatos</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}" />
+</head>
+<body>
+  <div id="toast" class="toast hidden"></div>
+
+  <header class="topbar">
+    <div class="brand">
+      <span class="brand-dot"></span>
+      <h1>Follow-ups de candidatos</h1>
+    </div>
+    <div class="topbar-actions">
+      <span id="userEmail" class="conn-status hidden"></span>
+      <button id="syncBtn" class="btn btn-secondary hidden">Sincronizar calendario</button>
+      <button id="logoutBtn" class="btn btn-secondary hidden">Cerrar sesión</button>
+      <a id="connectBtn" href="/login" class="btn btn-primary hidden">Conectar Google Calendar</a>
+    </div>
+  </header>
+
+  <main id="app" class="hidden">
+    <section class="summary">
+      <div class="summary-card pending">
+        <span class="summary-count" id="pendingCount">0</span>
+        <span class="summary-label">Follow-ups pendientes</span>
+      </div>
+      <div class="summary-card upcoming">
+        <span class="summary-count" id="upcomingCount">0</span>
+        <span class="summary-label">En seguimiento (al día)</span>
+      </div>
+      <div class="summary-card done">
+        <span class="summary-count" id="historyCount">0</span>
+        <span class="summary-label">Seguimientos realizados</span>
+      </div>
+      <div class="summary-card archived">
+        <span class="summary-count" id="closedCount">0</span>
+        <span class="summary-label">Archivados</span>
+      </div>
+    </section>
+
+    <section class="panel">
+      <div class="panel-header">
+        <h2>Follow-ups pendientes</h2>
+        <span class="hint">Marcá el check cuando hagas el seguimiento. Vuelve a avisar en 7 días.</span>
+      </div>
+      <div id="pendingList" class="list"></div>
+      <div id="pendingEmpty" class="empty hidden">No tenés follow-ups pendientes. 🎉</div>
+    </section>
+
+    <section class="panel">
+      <div class="panel-header">
+        <h2>En seguimiento</h2>
+        <span class="hint">Ya hiciste el último contacto. Van a reaparecer como pendientes cuando corresponda.</span>
+      </div>
+      <div id="upcomingList" class="list"></div>
+      <div id="upcomingEmpty" class="empty hidden">No hay candidatos en espera todavía.</div>
+    </section>
+
+    <section class="panel">
+      <div class="panel-header">
+        <h2>Historial de seguimientos realizados</h2>
+      </div>
+      <div id="historyList" class="list history"></div>
+      <div id="historyEmpty" class="empty hidden">Todavía no marcaste ningún follow-up como realizado.</div>
+    </section>
+
+    <section class="panel">
+      <div class="panel-header">
+        <h2>Archivados</h2>
+        <span class="hint">Candidatos a los que ya dejaste de hacerles seguimiento.</span>
+      </div>
+      <div id="closedList" class="list closed"></div>
+      <div id="closedEmpty" class="empty hidden">Todavía no archivaste ningún candidato.</div>
+    </section>
+  </main>
+
+  <main id="disconnected" class="hidden empty-state">
+    <div class="empty-state-card">
+      <h2>Iniciá sesión con tu cuenta de Google</h2>
+      <p>Cada persona ve únicamente sus propias entrevistas y follow-ups.
+      La app lee (solo lectura) los eventos de tu calendario para detectar
+      entrevistas ya realizadas.</p>
+      <a href="/login" class="btn btn-primary">Conectar Google Calendar</a>
+    </div>
+  </main>
+
+  <script src="{{ url_for('static', filename='app.js') }}"></script>
+</body>
+</html>
