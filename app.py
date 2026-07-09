@@ -52,13 +52,26 @@ DAYS_FIRST_REMINDER = 7
 DAYS_BETWEEN_REMINDERS = 7
 SYNC_LOOKBACK_DAYS = 180
 
+# Motivos válidos para dejar de notificar a un candidato.
+CLOSE_REASONS = {
+    "hired": "Contratado",
+    "hold": "En hold",
+    "position_closed": "Vacante cerrada",
+    "rejected": "No continúa",
+}
+
 app = Flask(__name__)
 app.secret_key = os.environ.get("FLASK_SECRET_KEY", os.urandom(24).hex())
 
+
 def _prepare_database_url(raw_url):
-    """Usa pg8000 (driver 100% Python) para Postgres, y separa el sslmode
-    (que pg8000 no entiende como parámetro de conexión) en un SSLContext
-    real pasado por separado."""
+    """Normaliza la URL de DB: usa pg8000 (driver 100% Python) para Postgres,
+    en vez de psycopg2, para evitar problemas de compatibilidad binaria con
+    versiones nuevas de Python. Neon/Render agregan "sslmode=require" (y a
+    veces "channel_binding") en la URL, que pg8000 no entiende como parámetro
+    de conexión directo — lo sacamos de la URL y lo convertimos en un
+    SSLContext real pasado por separado.
+    """
     if raw_url.startswith("postgres://"):
         raw_url = raw_url.replace("postgres://", "postgresql://", 1)
 
@@ -93,6 +106,7 @@ app.config["SQLALCHEMY_DATABASE_URI"] = db_url
 app.config["SQLALCHEMY_ENGINE_OPTIONS"] = {"pool_pre_ping": True, **_extra_engine_options}
 db = SQLAlchemy(app)
 
+
 # ---------------------------------------------------------------------------
 # Modelos
 # ---------------------------------------------------------------------------
@@ -116,6 +130,12 @@ class Interview(db.Model):
     attendees = db.Column(db.Text)
     next_reminder_date = db.Column(db.DateTime, nullable=False)
     created_at = db.Column(db.DateTime, nullable=False)
+
+    # "active" = se sigue notificando; "closed" = se dejó de notificar
+    # (contratado, hold, vacante cerrada, o no continúa).
+    status = db.Column(db.String(20), nullable=False, default="active")
+    status_reason = db.Column(db.String(50))
+    status_changed_at = db.Column(db.DateTime)
 
     __table_args__ = (db.UniqueConstraint("user_email", "event_id", name="uq_user_event"),)
 
@@ -362,6 +382,7 @@ def sync():
                 attendees=json.dumps(attendees),
                 next_reminder_date=_naive_utc(next_reminder),
                 created_at=_naive_utc(datetime.now(timezone.utc)),
+                status="active",
             )
         )
         inserted += 1
@@ -380,7 +401,7 @@ def sync():
 
 
 # ---------------------------------------------------------------------------
-# Follow-ups: pendientes / historial / completar (scoped por usuario)
+# Follow-ups: pendientes / historial / completar / archivar (scoped por usuario)
 # ---------------------------------------------------------------------------
 
 def row_to_pending(row, today):
@@ -401,12 +422,29 @@ def row_to_pending(row, today):
     }
 
 
+def row_to_closed(row):
+    return {
+        "event_id": row.event_id,
+        "candidate_name": row.candidate_name,
+        "position": row.position,
+        "company": row.company,
+        "interview_datetime": row.interview_datetime.replace(tzinfo=timezone.utc).isoformat(),
+        "status_reason": row.status_reason,
+        "status_reason_label": CLOSE_REASONS.get(row.status_reason, row.status_reason),
+        "status_changed_at": (
+            row.status_changed_at.replace(tzinfo=timezone.utc).isoformat()
+            if row.status_changed_at
+            else None
+        ),
+    }
+
+
 @app.route("/api/followups/pending")
 @login_required_api
 def followups_pending():
     email = current_user_email()
     today = datetime.now(timezone.utc)
-    rows = Interview.query.filter_by(user_email=email).all()
+    rows = Interview.query.filter_by(user_email=email, status="active").all()
     pending = [r for r in rows if r.next_reminder_date.replace(tzinfo=timezone.utc) <= today]
     pending.sort(key=lambda r: r.next_reminder_date)
     return jsonify([row_to_pending(r, today) for r in pending])
@@ -417,7 +455,7 @@ def followups_pending():
 def followups_upcoming():
     email = current_user_email()
     today = datetime.now(timezone.utc)
-    rows = Interview.query.filter_by(user_email=email).all()
+    rows = Interview.query.filter_by(user_email=email, status="active").all()
     upcoming = [r for r in rows if r.next_reminder_date.replace(tzinfo=timezone.utc) > today]
     upcoming.sort(key=lambda r: r.next_reminder_date)
     return jsonify([row_to_pending(r, today) for r in upcoming])
@@ -445,6 +483,24 @@ def followups_history():
             for r in rows
         ]
     )
+
+
+@app.route("/api/followups/closed")
+@login_required_api
+def followups_closed():
+    email = current_user_email()
+    rows = (
+        Interview.query.filter_by(user_email=email, status="closed")
+        .order_by(Interview.status_changed_at.desc())
+        .all()
+    )
+    return jsonify([row_to_closed(r) for r in rows])
+
+
+@app.route("/api/followups/reasons")
+@login_required_api
+def followups_reasons():
+    return jsonify(CLOSE_REASONS)
 
 
 @app.route("/api/followups/<event_id>/complete", methods=["POST"])
@@ -475,16 +531,34 @@ def complete_followup(event_id):
     return jsonify({"ok": True, "next_reminder_date": next_reminder.isoformat()})
 
 
-# ---------------------------------------------------------------------------
-# Vista principal
-# ---------------------------------------------------------------------------
+@app.route("/api/followups/<event_id>/close", methods=["POST"])
+@login_required_api
+def close_followup(event_id):
+    """Deja de notificar a un candidato: contratado, en hold, vacante cerrada
+    o no continúa. No se borra el registro, solo deja de aparecer en
+    pendientes/en seguimiento y pasa a la sección de archivados."""
+    email = current_user_email()
+    data = request.get_json(silent=True) or {}
+    reason = data.get("reason")
+    if reason not in CLOSE_REASONS:
+        return jsonify({"error": "invalid_reason", "valid_reasons": list(CLOSE_REASONS)}), 400
 
-@app.route("/")
-def index():
-    return render_template("index.html")
+    row = Interview.query.filter_by(user_email=email, event_id=event_id).first()
+    if not row:
+        return jsonify({"error": "not_found"}), 404
+
+    row.status = "closed"
+    row.status_reason = reason
+    row.status_changed_at = _naive_utc(datetime.now(timezone.utc))
+    db.session.commit()
+
+    return jsonify({"ok": True})
 
 
-init_db()
-
-if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)), debug=True)
+@app.route("/api/followups/<event_id>/reactivate", methods=["POST"])
+@login_required_api
+def reactivate_followup(event_id):
+    """Por si se archivó un candidato por error: vuelve a activar los
+    recordatorios (no cambia la fecha del próximo aviso)."""
+    email = current_user_email()
+    row =
