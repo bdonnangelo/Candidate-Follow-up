@@ -273,10 +273,12 @@ def parse_event_title(summary: str):
     }
 
 
-def fetch_calendar_events(creds: Credentials):
+def fetch_calendar_events(creds: Credentials, since_dt=None):
     service = build("calendar", "v3", credentials=creds)
     now = datetime.now(timezone.utc)
-    time_min = (now - timedelta(days=SYNC_LOOKBACK_DAYS)).isoformat()
+    if since_dt is None:
+        since_dt = now - timedelta(days=SYNC_LOOKBACK_DAYS)
+    time_min = since_dt.isoformat()
     time_max = now.isoformat()
 
     events = []
@@ -317,8 +319,17 @@ def sync():
     if not creds or not creds.valid:
         return jsonify({"error": "not_connected"}), 401
 
+    data = request.get_json(silent=True) or {}
+    since_str = data.get("since")
+    since_dt = None
+    if since_str:
+        try:
+            since_dt = datetime.strptime(since_str, "%Y-%m-%d").replace(tzinfo=timezone.utc)
+        except ValueError:
+            return jsonify({"error": "invalid_since"}), 400
+
     try:
-        events = fetch_calendar_events(creds)
+        events = fetch_calendar_events(creds, since_dt)
     except Exception as e:
         return jsonify({"error": "calendar_error", "detail": str(e)}), 502
 
