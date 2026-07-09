@@ -561,4 +561,28 @@ def reactivate_followup(event_id):
     """Por si se archivó un candidato por error: vuelve a activar los
     recordatorios (no cambia la fecha del próximo aviso)."""
     email = current_user_email()
-    row =
+    row = Interview.query.filter_by(user_email=email, event_id=event_id).first()
+    if not row:
+        return jsonify({"error": "not_found"}), 404
+
+    row.status = "active"
+    row.status_reason = None
+    row.status_changed_at = None
+    db.session.commit()
+
+    return jsonify({"ok": True})
+
+
+# ---------------------------------------------------------------------------
+# Vista principal
+# ---------------------------------------------------------------------------
+
+@app.route("/")
+def index():
+    return render_template("index.html")
+
+
+init_db()
+
+if __name__ == "__main__":
+    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)), debug=True)
