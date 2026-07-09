@@ -39,9 +39,9 @@ body {
 }
 
 .brand { display: flex; align-items: center; gap: 10px; }
-.brand-dot {
-  width: 10px; height: 10px; border-radius: 50%;
-  background: var(--primary);
+.brand-logo {
+  height: 32px;
+  width: auto;
 }
 .brand h1 { font-size: 17px; font-weight: 600; margin: 0; }
 
